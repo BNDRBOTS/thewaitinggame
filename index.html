@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>The Waiting Game</title>
+    
+    <!-- Load required libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    
+    <!-- Load typography: Fjord One for primary text, Inter for functional text -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fjord+One&family=Inter:wght@300;400&display=swap" rel="stylesheet">
+
+    <style>
+        /* Base resets and color palette enforcement */
+        :root {
+            --color-bg: #06080B;
+            --color-text-primary: #F4F1EB;
+            --color-text-muted: #A3B1B6;
+            --color-accent: #D96C4A;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: var(--color-bg);
+            color: var(--color-text-primary);
+            overflow: hidden;
+            font-family: 'Inter', sans-serif;
+            cursor: crosshair;
+        }
+
+        /* Three.js canvas container */
+        #webgl-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* Progress ring UI */
+        #progress-ui {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-90deg);
+            width: 80vmin;
+            height: 80vmin;
+            z-index: 2;
+            pointer-events: none;
+            opacity: 0.3;
+            transition: opacity 1s ease;
+        }
+
+        .progress-circle {
+            fill: none;
+            stroke: var(--color-text-muted);
+            stroke-width: 1;
+            stroke-dasharray: 1000;
+            stroke-dashoffset: 1000;
+        }
+
+        /* Asymmetrical layout for text reveals - Breaking standard grids */
+        #content-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 3;
+            pointer-events: none;
+            display: grid;
+            grid-template-columns: 1fr 2fr 1fr 1fr;
+            grid-template-rows: 1fr 1fr 2fr 1fr;
+            padding: 4vw;
+            box-sizing: border-box;
+        }
+
+        .text-block {
+            opacity: 0;
+            /* Will be animated by GSAP */
+        }
+
+        /* Delayed headline - minimal and grounded */
+        .instruction {
+            grid-column: 2 / 3;
+            grid-row: 2 / 3;
+            align-self: end;
+            font-size: 0.85rem;
+            letter-spacing: 0.05em;
+            color: var(--color-text-muted);
+            text-transform: uppercase;
+        }
+
+        /* Primary copy - 5th grade reading level, calm tone */
+        .statement-main {
+            grid-column: 3 / 5;
+            grid-row: 3 / 4;
+            font-family: 'Fjord One', serif;
+            font-size: clamp(2rem, 5vw, 4rem);
+            line-height: 1.1;
+            align-self: center;
+            margin-left: -5vw; /* Intentional overlap and broken symmetry */
+        }
+
+        .statement-sub {
+            grid-column: 1 / 3;
+            grid-row: 4 / 5;
+            font-family: 'Fjord One', serif;
+            font-size: clamp(1.2rem, 2.5vw, 2rem);
+            color: var(--color-accent);
+            align-self: end;
+        }
+
+        .branding {
+            position: absolute;
+            bottom: 4vw;
+            right: 4vw;
+            font-size: 0.75rem;
+            letter-spacing: 0.1em;
+            color: var(--color-text-muted);
+            opacity: 0;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="webgl-container"></div>
+
+    <svg id="progress-ui" viewBox="0 0 100 100">
+        <circle class="progress-circle" cx="50" cy="50" r="48" id="ring" />
+    </svg>
+
+    <div id="content-layer">
+        <div class="text-block instruction" id="text-instruction">
+            Stop moving to build the picture.<br>
+            Movement breaks it.
+        </div>
+        <div class="text-block statement-main" id="text-main">
+            Patience is rare.
+        </div>
+        <div class="text-block statement-sub" id="text-sub">
+            Most people leave early.<br>
+            But you stayed.
+        </div>
+    </div>
+    
+    <div class="branding" id="text-brand">THE WAITING GAME</div>
+
+    <script>
+        /**
+         * Core Application Logic
+         * Handles Three.js rendering, particle math, and user input state.
+         */
+        
+        // --- State Variables ---
+        let lastInteractionTime = Date.now();
+        let progressAmount = 0; // Ranges from 0 (chaos) to 1 (perfect order)
+        let isComplete = false;
+        
+        // --- Configuration ---
+        const IDLE_DELAY_MS = 800; // Time before progress starts filling
+        const PROGRESS_SPEED = 0.004; // Speed of assembly
+        const REGRESS_SPEED = 0.05; // Speed of scattering when user moves
+        const PARTICLE_COUNT = 25000;
+
+        // --- DOM Elements ---
+        const ringElement = document.getElementById('ring');
+        const progressUi = document.getElementById('progress-ui');
+        
+        // Ring dash setup
+        const ringLength = ringElement.getTotalLength();
+        ringElement.style.strokeDasharray = ringLength;
+        ringElement.style.strokeDashoffset = ringLength;
+
+        // --- Three.js Setup ---
+        const container = document.getElementById('webgl-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#06080B');
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = 12;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // --- Particle Geometry Generation ---
+        const geometry = new THREE.BufferGeometry();
+        const positions = new Float32Array(PARTICLE_COUNT * 3);
+        const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+        const colors = new Float32Array(PARTICLE_COUNT * 3);
+        const randomOffsets = new Float32Array(PARTICLE_COUNT * 3);
+
+        const colorAccent = new THREE.Color('#D96C4A'); // Burnt Sienna
+        const colorTeal = new THREE.Color('#4A7C82');   // Muted Teal
+        const colorSand = new THREE.Color('#F4F1EB');   // Soft Sand
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const i3 = i * 3;
+
+            // 1. Initial Chaos Positions (Spread out in a large volume)
+            positions[i3] = (Math.random() - 0.5) * 30;
+            positions[i3 + 1] = (Math.random() - 0.5) * 30;
+            positions[i3 + 2] = (Math.random() - 0.5) * 30;
+
+            // 2. Target Ordered Positions (Phyllotaxis spiral on a sphere for natural harmony)
+            const phi = Math.acos(1 - 2 * (i + 0.5) / PARTICLE_COUNT);
+            const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+            const radius = 4;
+
+            const tx = radius * Math.cos(theta) * Math.sin(phi);
+            const ty = radius * Math.sin(theta) * Math.sin(phi);
+            const tz = radius * Math.cos(phi);
+
+            targetPositions[i3] = tx;
+            targetPositions[i3 + 1] = ty;
+            targetPositions[i3 + 2] = tz;
+
+            // 3. Random offsets for organic drifting when not fully formed
+            randomOffsets[i3] = (Math.random() - 0.5) * 2;
+            randomOffsets[i3 + 1] = (Math.random() - 0.5) * 2;
+            randomOffsets[i3 + 2] = (Math.random() - 0.5) * 2;
+
+            // 4. Color assignment based on vertical position in the target shape
+            const mixedColor = colorAccent.clone().lerp(colorTeal, (ty + radius) / (radius * 2));
+            // Sprinkle some sand color for contrast
+            if (Math.random() > 0.85) mixedColor.lerp(colorSand, 0.9);
+
+            colors[i3] = mixedColor.r;
+            colors[i3 + 1] = mixedColor.g;
+            colors[i3 + 2] = mixedColor.b;
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('targetPosition', new THREE.BufferAttribute(targetPositions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        geometry.setAttribute('randomOffset', new THREE.BufferAttribute(randomOffsets, 3));
+
+        // --- Custom Shader Material ---
+        // Interpolates between chaos and order based on uniform progress
+        const material = new THREE.ShaderMaterial({
+            uniforms: {
+                uProgress: { value: 0.0 },
+                uTime: { value: 0.0 }
+            },
+            vertexShader: `
+                uniform float uProgress;
+                uniform float uTime;
+                
+                attribute vec3 targetPosition;
+                attribute vec3 color;
+                attribute vec3 randomOffset;
+                
+                varying vec3 vColor;
+                
+                void main() {
+                    vColor = color;
+                    
+                    // Create a gentle drifting motion that intensifies when progress is low
+                    vec3 drift = vec3(
+                        sin(uTime * 1.5 + randomOffset.x * 10.0),
+                        cos(uTime * 1.2 + randomOffset.y * 10.0),
+                        sin(uTime * 1.8 + randomOffset.z * 10.0)
+                    ) * (1.0 - uProgress) * 2.0;
+                    
+                    // Smoothly mix between starting random position and the target sphere shape
+                    // Apply an easing curve (cubic) to make the final snap into place feel solid
+                    float easeProgress = uProgress * uProgress * (3.0 - 2.0 * uProgress); 
+                    vec3 currentPos = mix(position + drift, targetPosition, easeProgress);
+                    
+                    vec4 mvPosition = modelViewMatrix * vec4(currentPos, 1.0);
+                    
+                    // Scale points based on depth and progress
+                    gl_PointSize = (20.0 / -mvPosition.z) * (0.5 + uProgress * 1.5);
+                    gl_Position = projectionMatrix * mvPosition;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vColor;
+                
+                void main() {
+                    // Create soft circular particles instead of harsh squares
+                    float dist = length(gl_PointCoord - vec2(0.5));
+                    if (dist > 0.5) discard;
+                    
+                    // Soft edge alpha
+                    float alpha = smoothstep(0.5, 0.2, dist);
+                    gl_FragColor = vec4(vColor, alpha);
+                }
+            `,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        scene.add(particleSystem);
+
+        // --- Interaction Tracking ---
+        function resetInteraction() {
+            lastInteractionTime = Date.now();
+            
+            // If the user moves after completing the puzzle, break it down immediately
+            if (isComplete) {
+                isComplete = false;
+                hideContent();
+            }
+        }
+
+        // Bind all disruptive interactions
+        window.addEventListener('mousemove', resetInteraction);
+        window.addEventListener('touchstart', resetInteraction);
+        window.addEventListener('touchmove', resetInteraction);
+        window.addEventListener('wheel', resetInteraction);
+        window.addEventListener('keydown', resetInteraction);
+        
+        // Initial hint sequence
+        setTimeout(() => {
+            gsap.to('#text-instruction', { opacity: 1, duration: 2, ease: 'power2.out' });
+        }, 1000);
+
+        // --- View Reveal Logic (GSAP) ---
+        function showContent() {
+            gsap.killTweensOf('.text-block, .branding, #progress-ui');
+            
+            // Fade out the instruction and the ring
+            gsap.to('#text-instruction', { opacity: 0, duration: 1 });
+            progressUi.style.opacity = 0;
+
+            // Staggered reveal of the asymmetrical layout
+            gsap.to('#text-main', { opacity: 1, y: -20, duration: 2, ease: 'power3.out' });
+            gsap.to('#text-sub', { opacity: 1, y: -20, duration: 2, delay: 0.5, ease: 'power3.out' });
+            gsap.to('#text-brand', { opacity: 1, duration: 3, delay: 1 });
+        }
+
+        function hideContent() {
+            gsap.killTweensOf('.text-block, .branding, #progress-ui');
+            
+            // Fade out the main content
+            gsap.to('#text-main', { opacity: 0, y: 0, duration: 0.5 });
+            gsap.to('#text-sub', { opacity: 0, y: 0, duration: 0.5 });
+            gsap.to('#text-brand', { opacity: 0, duration: 0.5 });
+            
+            // Bring back the instruction and ring
+            gsap.to('#text-instruction', { opacity: 1, duration: 1, delay: 0.5 });
+            progressUi.style.opacity = 0.3;
+        }
+
+        // --- Main Render Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = clock.getElapsedTime();
+            const timeSinceInteraction = Date.now() - lastInteractionTime;
+
+            // Logic: Fill progress only if idle. Drain quickly if moved.
+            if (timeSinceInteraction > IDLE_DELAY_MS) {
+                progressAmount += PROGRESS_SPEED;
+            } else {
+                progressAmount -= REGRESS_SPEED;
+            }
+
+            // Clamp progress
+            progressAmount = Math.max(0, Math.min(1, progressAmount));
+
+            // Update Shader
+            material.uniforms.uProgress.value = progressAmount;
+            material.uniforms.uTime.value = time;
+
+            // Update UI Ring
+            const offset = ringLength - (progressAmount * ringLength);
+            ringElement.style.strokeDashoffset = offset;
+
+            // Rotate the entire system slowly for visual elegance
+            particleSystem.rotation.y = time * 0.05;
+            particleSystem.rotation.z = time * 0.02;
+
+            // Check completion state
+            if (progressAmount > 0.99 && !isComplete) {
+                isComplete = true;
+                showContent();
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // --- Resize Handler ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start loop
+        animate();
+
+    </script>
+</body>
+</html>
