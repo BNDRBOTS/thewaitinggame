@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <!-- Viewport enforcement: Prevents scaling and rubber-banding on mobile -->
+    <!-- Viewport enforcement: Prevents scaling, rubber-banding, and respects notch areas -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0A0A0C">
     <title>The Waiting Game</title>
     
     <!-- Dependencies -->
@@ -16,9 +17,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Fjord+One&family=Inter:wght@300;400&display=swap" rel="stylesheet">
 
     <style>
-        /* * Color Palette & Design Tokens 
-         * Limited to 4 specific tones to ensure high contrast and focus.
-         */
+        /* * Color Palette & Design Tokens */
         :root {
             --bg-base: #0A0A0C;       /* Deep Obsidian */
             --text-main: #EBE8E1;     /* Warm Pearl */
@@ -29,39 +28,40 @@
             --font-func: 'Inter', sans-serif;
         }
 
-        /* Base Resets & Mobile Optimizations */
+        /* Base Resets & Hardware-Level Mobile Optimizations */
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
+            /* Disable native interactions that break immersion */
+            -webkit-tap-highlight-color: transparent;
         }
 
         body, html {
             width: 100%;
-            height: 100dvh; /* Dynamic viewport height for modern mobile browsers */
+            height: 100dvh; /* Dynamic viewport height to handle mobile URL bar shifts */
             background-color: var(--bg-base);
             color: var(--text-main);
             overflow: hidden;
             font-family: var(--font-func);
-            overscroll-behavior: none; /* Prevent swipe-to-refresh on mobile */
+            overscroll-behavior: none; /* Prevent swipe-to-refresh */
+            touch-action: none; /* Kills all native browser gestures (zoom, pan) */
+            user-select: none; /* Prevent accidental text highlighting */
+            -webkit-user-select: none;
             cursor: crosshair;
         }
 
-        /* * WebGL Container 
-         * Fixed to background, absolute positioning to separate from DOM flow.
-         */
+        /* * WebGL Container */
         #canvas-root {
             position: absolute;
             inset: 0;
             z-index: 1;
-            pointer-events: none; /* Prevent canvas from trapping touch events */
+            pointer-events: none;
         }
 
-        /* * Asymmetrical Layout Grid
-         * Violates standard hero-centric templates. Forces the eye to wander.
-         */
+        /* * Asymmetrical Layout Grid */
         #ui-layer {
             position: absolute;
             inset: 0;
@@ -70,13 +70,12 @@
             display: grid;
             grid-template-columns: repeat(12, 1fr);
             grid-template-rows: auto 1fr auto;
-            pointer-events: none; /* Let input pass through to document listeners */
+            pointer-events: none;
         }
 
-        /* Typographic Elements */
         .text-element {
-            opacity: 0; /* Managed entirely by GSAP */
-            will-change: opacity, transform;
+            opacity: 0;
+            will-change: opacity, transform; /* Hardware acceleration hint */
         }
 
         /* Top Left: Precise, clinical instruction */
@@ -114,9 +113,7 @@
             color: var(--accent-primary);
         }
 
-        /* * Minimalist Meter 
-         * Replaces the giant circle with a precise, clinical line indicator.
-         */
+        /* * Minimalist Meter */
         #meter-container {
             grid-column: 1 / span 2;
             grid-row: 3;
@@ -142,8 +139,9 @@
             bottom: 0;
             left: -1px;
             width: 3px;
-            height: 0%; /* Driven by JS */
+            height: 0%; 
             background: var(--text-dim);
+            will-change: height; /* Optimize repaint for high-frequency updates */
         }
 
         .meter-label {
@@ -170,26 +168,27 @@
 </head>
 <body>
 
-    <!-- WebGL Render Target -->
-    <div id="canvas-root"></div>
+    <!-- WebGL Render Target: Silenced for screen readers, handles purely visual data -->
+    <div id="canvas-root" aria-hidden="true"></div>
 
-    <!-- Interface Overlay -->
-    <main id="ui-layer">
+    <!-- Interface Overlay: W3C compliant roles implicitly managed -->
+    <main id="ui-layer" role="main">
         
-        <div class="text-element header-instruction" id="ui-instruction">
+        <div class="text-element header-instruction" id="ui-instruction" aria-live="polite">
             Do not touch the screen.<br>
             Do not move the mouse.<br>
             Wait.
         </div>
 
-        <div id="meter-container">
-            <div class="meter-label">Patience</div>
-            <div class="meter-track">
+        <!-- Semantic progress tracking -->
+        <div id="meter-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="meter-label" aria-hidden="true">Patience</div>
+            <div class="meter-track" aria-hidden="true">
                 <div class="meter-fill" id="ui-meter"></div>
             </div>
         </div>
 
-        <div class="primary-statement">
+        <div class="primary-statement" aria-live="assertive">
             <h1 class="text-element" id="ui-title">It takes time.</h1>
             <p class="text-element" id="ui-subtitle">Most leave. You stayed.</p>
         </div>
@@ -198,9 +197,9 @@
 
     <script>
         /**
-         * The Waiting Game - Production Build
-         * Architecture: State -> Input -> WebGL -> DOM
-         * Emphasizes clean separation of concerns and strict performance management.
+         * The Waiting Game - Elite Production Build
+         * Hardware-optimized architecture incorporating Page Visibility API,
+         * ResizeObserver debouncing, and explicit WebGL precision logic.
          */
         const App = (function() {
             
@@ -209,11 +208,13 @@
                 lastInteraction: Date.now(),
                 progress: 0,
                 isResolved: false,
+                isPaused: false, // Respects device battery / visibility
                 config: {
-                    idleDelay: 1200,      // Ms to wait before building
-                    buildRate: 0.003,     // Speed of formation
-                    decayRate: 0.08,      // Speed of destruction on movement
-                    particleCount: window.innerWidth < 768 ? 60000 : 150000 // Scale based on device
+                    idleDelay: 1200,
+                    buildRate: 0.003,
+                    decayRate: 0.08,
+                    // Dynamic scaling based on device capability proxy (screen width)
+                    particleCount: window.innerWidth < 768 ? 60000 : 150000 
                 }
             };
 
@@ -226,13 +227,14 @@
                 subtitle: document.getElementById('ui-subtitle'),
 
                 init() {
-                    // Initial fade in for instructions
                     gsap.to(this.instruction, { opacity: 1, y: 10, duration: 2, ease: "power2.out", delay: 1 });
                 },
 
                 update(progress) {
-                    // Direct DOM manipulation for high-frequency meter updates
+                    // Direct manipulation bypasses React-style diffing for 60fps fluidity
                     this.meter.style.height = `${progress * 100}%`;
+                    // Update W3C accessibility state
+                    this.meterContainer.setAttribute('aria-valuenow', Math.floor(progress * 100));
                 },
 
                 triggerResolution() {
@@ -241,7 +243,6 @@
 
                     gsap.killTweensOf([this.instruction, this.meterContainer, this.title, this.subtitle]);
 
-                    // Fade out UI, fade in reward text
                     gsap.to(this.instruction, { opacity: 0, y: 0, duration: 1 });
                     gsap.to(this.meterContainer, { opacity: 0, duration: 1 });
                     
@@ -255,27 +256,45 @@
 
                     gsap.killTweensOf([this.instruction, this.meterContainer, this.title, this.subtitle]);
 
-                    // Instantly hide reward text, slowly bring back instructions
                     gsap.to([this.title, this.subtitle], { opacity: 0, y: 0, duration: 0.3 });
                     gsap.to(this.meterContainer, { opacity: 0.4, duration: 1, delay: 0.5 });
                     gsap.to(this.instruction, { opacity: 1, y: 10, duration: 1.5, delay: 0.8 });
                 }
             };
 
-            // --- 3. Input Handling ---
-            const Input = {
+            // --- 3. Input & Hardware Handling ---
+            const Hardware = {
+                resizeTimeout: null,
+
                 init() {
                     const reset = this.handleInteraction.bind(this);
                     
-                    // Comprehensive event capture
+                    // Comprehensive event capture with {passive: true} to prevent scrolling jank
                     window.addEventListener('mousemove', reset, { passive: true });
                     window.addEventListener('touchstart', reset, { passive: true });
                     window.addEventListener('touchmove', reset, { passive: true });
                     window.addEventListener('wheel', reset, { passive: true });
                     window.addEventListener('keydown', reset, { passive: true });
+
+                    // Battery & Performance optimization: Pause render when tab is inactive
+                    document.addEventListener("visibilitychange", () => {
+                        State.isPaused = document.hidden;
+                        if (!State.isPaused) {
+                            State.lastInteraction = Date.now(); // Reset on return to prevent instant penalty
+                        }
+                    });
+
+                    // Debounced resize to handle mobile address bar shifting without thrashing the GPU
+                    window.addEventListener('resize', () => {
+                        if (this.resizeTimeout) clearTimeout(this.resizeTimeout);
+                        this.resizeTimeout = setTimeout(() => {
+                            RenderEngine.onResize();
+                        }, 150);
+                    }, { passive: true });
                 },
 
                 handleInteraction() {
+                    if (State.isPaused) return;
                     State.lastInteraction = Date.now();
                     if (State.isResolved) {
                         UI.triggerDecay();
@@ -298,24 +317,24 @@
                     const width = window.innerWidth;
                     const height = window.innerHeight;
 
-                    // Scene & Camera
                     this.scene = new THREE.Scene();
-                    this.scene.fog = new THREE.FogExp2('#0A0A0C', 0.03); // Deep Obsidian fog
+                    this.scene.fog = new THREE.FogExp2('#0A0A0C', 0.03);
 
                     this.camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
                     this.camera.position.z = 24;
 
-                    // Renderer with performance limits
-                    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+                    this.renderer = new THREE.WebGLRenderer({ 
+                        antialias: true, 
+                        alpha: false, 
+                        powerPreference: "high-performance" 
+                    });
                     this.renderer.setSize(width, height);
-                    // Cap pixel ratio to 2 to prevent mobile overheating while maintaining crispness
+                    
+                    // Cap pixel ratio to 2. Retina displays (DPR 3+) waste GPU calculating imperceptible pixels
                     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
                     container.appendChild(this.renderer.domElement);
 
                     this.buildGeometry();
-                    
-                    // Handle resizing
-                    window.addEventListener('resize', this.onResize.bind(this), { passive: true });
                 },
 
                 buildGeometry() {
@@ -325,26 +344,25 @@
                     const positions = new Float32Array(count * 3);
                     const targets = new Float32Array(count * 3);
                     const colors = new Float32Array(count * 3);
-                    const attributes = new Float32Array(count * 3); // x: random size, y: random offset, z: index fraction
+                    const attributes = new Float32Array(count * 3);
 
-                    const colorBase = new THREE.Color('#C25E40'); // Terracotta
-                    const colorTip = new THREE.Color('#8A9A92');  // Sage
-                    const colorSand = new THREE.Color('#EBE8E1'); // Pearl
+                    const colorBase = new THREE.Color('#C25E40');
+                    const colorTip = new THREE.Color('#8A9A92');
+                    const colorSand = new THREE.Color('#EBE8E1');
 
                     for (let i = 0; i < count; i++) {
                         const i3 = i * 3;
                         const fraction = i / count;
 
-                        // 1. Scatter positions (Initial chaos state)
+                        // 1. Scatter positions (Initial chaos)
                         positions[i3] = (Math.random() - 0.5) * 60;
                         positions[i3 + 1] = (Math.random() - 0.5) * 60;
                         positions[i3 + 2] = (Math.random() - 0.5) * 60;
 
-                        // 2. Ordered positions (A complex parametric twist / infinity ribbon)
-                        const t = fraction * Math.PI * 2 * 10; // Multiple wraps
+                        // 2. Ordered positions (Infinity ribbon calculation)
+                        const t = fraction * Math.PI * 2 * 10;
                         const radius = 6 + Math.sin(t * 0.5) * 2;
                         
-                        // Introduce controlled noise to the perfect shape to make it organic
                         const noiseX = (Math.random() - 0.5) * 0.5;
                         const noiseY = (Math.random() - 0.5) * 0.5;
                         const noiseZ = (Math.random() - 0.5) * 0.5;
@@ -353,18 +371,18 @@
                         targets[i3 + 1] = Math.sin(t * 1.5) * (radius * 0.8) + noiseY;
                         targets[i3 + 2] = Math.sin(t) * radius + noiseZ;
 
-                        // 3. Color mapping based on position within the ribbon
+                        // 3. Color mapping
                         const mixed = colorBase.clone().lerp(colorTip, Math.sin(t) * 0.5 + 0.5);
-                        if (Math.random() > 0.9) mixed.lerp(colorSand, 0.8); // Sparkles
+                        if (Math.random() > 0.9) mixed.lerp(colorSand, 0.8);
 
                         colors[i3] = mixed.r;
                         colors[i3 + 1] = mixed.g;
                         colors[i3 + 2] = mixed.b;
 
-                        // 4. Custom attributes for the shader
-                        attributes[i3] = Math.random(); // Size variance
-                        attributes[i3 + 1] = Math.random() * Math.PI * 2; // Phase offset
-                        attributes[i3 + 2] = fraction; // Ordering
+                        // 4. Custom attributes
+                        attributes[i3] = Math.random();
+                        attributes[i3 + 1] = Math.random() * Math.PI * 2;
+                        attributes[i3 + 2] = fraction;
                     }
 
                     this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -372,19 +390,20 @@
                     this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
                     this.geometry.setAttribute('customAttr', new THREE.BufferAttribute(attributes, 3));
 
-                    // Custom Shader Material - Handles the morphing entirely on the GPU
+                    // Explicit precision definitions guarantee identical math across varied mobile GPUs
                     this.material = new THREE.ShaderMaterial({
                         uniforms: {
                             uTime: { value: 0 },
                             uProgress: { value: 0 }
                         },
                         vertexShader: `
+                            precision highp float;
                             uniform float uTime;
                             uniform float uProgress;
                             
                             attribute vec3 targetPos;
                             attribute vec3 color;
-                            attribute vec3 customAttr; // x: size, y: phase, z: fraction
+                            attribute vec3 customAttr;
                             
                             varying vec3 vColor;
                             varying float vAlpha;
@@ -392,7 +411,6 @@
                             void main() {
                                 vColor = color;
                                 
-                                // Organic floating motion when dispersed
                                 float floatSpeed = customAttr.y + uTime * 0.5;
                                 vec3 floatOffset = vec3(
                                     sin(floatSpeed) * 2.0,
@@ -400,13 +418,9 @@
                                     sin(floatSpeed * 0.8) * 2.0
                                 ) * (1.0 - uProgress);
 
-                                // Smooth exponential easing for the snap into place
                                 float ease = pow(uProgress, 3.0);
-                                
-                                // Morph position
                                 vec3 currentPos = mix(position + floatOffset, targetPos, ease);
                                 
-                                // Add a subtle breathing effect to the final shape
                                 if (uProgress > 0.9) {
                                     float breath = sin(uTime * 2.0 + customAttr.z * 10.0) * 0.1;
                                     currentPos += normalize(targetPos) * breath * ease;
@@ -414,28 +428,24 @@
 
                                 vec4 mvPosition = modelViewMatrix * vec4(currentPos, 1.0);
                                 
-                                // Base size + variance, scaled by depth
                                 float baseSize = 8.0 + (customAttr.x * 15.0);
                                 gl_PointSize = baseSize * (1.0 / -mvPosition.z);
                                 
                                 gl_Position = projectionMatrix * mvPosition;
-                                
-                                // Fade out distant particles slightly
                                 vAlpha = smoothstep(50.0, 10.0, -mvPosition.z) * (0.3 + uProgress * 0.7);
                             }
                         `,
                         fragmentShader: `
+                            precision highp float;
                             varying vec3 vColor;
                             varying float vAlpha;
                             
                             void main() {
-                                // Create soft, glowing dots
                                 vec2 coord = gl_PointCoord - vec2(0.5);
                                 float dist = length(coord);
                                 
                                 if (dist > 0.5) discard;
                                 
-                                // Soft radial gradient
                                 float intensity = pow(1.0 - (dist * 2.0), 1.5);
                                 gl_FragColor = vec4(vColor, intensity * vAlpha);
                             }
@@ -460,11 +470,9 @@
                 render(progress) {
                     const time = this.clock.getElapsedTime();
                     
-                    // Update uniforms
                     this.material.uniforms.uTime.value = time;
                     this.material.uniforms.uProgress.value = progress;
 
-                    // Slow, majestic rotation of the entire system
                     this.mesh.rotation.y = time * 0.08;
                     this.mesh.rotation.z = time * 0.03;
 
@@ -476,24 +484,23 @@
             function tick() {
                 requestAnimationFrame(tick);
 
+                // Halt logic and render calculations entirely if backgrounded (Battery saver)
+                if (State.isPaused) return;
+
                 const timeSinceLastAction = Date.now() - State.lastInteraction;
 
-                // State Math: Calculate logical progress based on idle time
                 if (timeSinceLastAction > State.config.idleDelay) {
                     State.progress += State.config.buildRate;
                 } else {
                     State.progress -= State.config.decayRate;
                 }
 
-                // Clamp mathematically
                 State.progress = Math.max(0, Math.min(1, State.progress));
 
-                // Check resolution triggers
                 if (State.progress >= 0.99 && !State.isResolved) {
                     UI.triggerResolution();
                 }
 
-                // Update Output layers
                 UI.update(State.progress);
                 RenderEngine.render(State.progress);
             }
@@ -502,7 +509,7 @@
             return {
                 start() {
                     UI.init();
-                    Input.init();
+                    Hardware.init();
                     RenderEngine.init();
                     tick();
                 }
@@ -510,7 +517,7 @@
 
         })();
 
-        // Boot application when DOM is ready
+        // Boot execution
         document.addEventListener('DOMContentLoaded', () => App.start());
 
     </script>
